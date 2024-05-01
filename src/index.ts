@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import fs from "fs";
 import path from "path";
+import postcss from "postcss";
+import postcssScss from "postcss-scss";
 
 const [projectDirectory] = __dirname.split("/node_modules/");
 
@@ -70,25 +72,34 @@ const processTsxFiles = (tsxFiles: string[]) => {
   return result;
 };
 
-const getDeclaredClasses = (scssFile: string) => {
-  const result: string[] = [];
+const getClasses = async (scssFile: string) => {
+  const classes: string[] = [];
 
   const fileContent = fs.readFileSync(scssFile, "utf-8");
 
-  const classNames = fileContent.match(/\.([a-zA-Z][\w-]*)/g);
+  const res = await postcss().process(fileContent, {
+    from: scssFile,
+    parser: postcssScss,
+  });
 
-  if (classNames) {
-    classNames.forEach((className: string) => {
-      const formattedClassName = className.replace(".", "");
-      result.push(formattedClassName);
+  res.root.walkRules((rule) => {
+    rule.selectors.forEach((selector) => {
+      const selectors = selector.split(/[\s>+~:,]+/).map((s) => s.trim());
+      selectors.forEach((s: string) => {
+        if (s.startsWith(".") && /^[.#\[\w-]+$/.test(s)) {
+          const sliced = s.slice(1);
+          const classNames = sliced.split(".");
+          classes.push(...classNames);
+        }
+      });
     });
-  }
+  });
 
-  return result;
+  return classes;
 };
 
 const getClassesPerTsxFile = (tsxFiles: string[]) => {
-  const result: TsxClass[] = [];
+  const tsxClasses: TsxClass[] = [];
 
   tsxFiles.forEach((tsxFilePath: string) => {
     const tsxContent = fs.readFileSync(tsxFilePath, "utf-8");
@@ -98,34 +109,26 @@ const getClassesPerTsxFile = (tsxFiles: string[]) => {
     if (classNames) {
       classNames.forEach((className: string) => {
         const formattedClassName = className.replace("cn.", "");
-        const existingObject = result.find(
+        const existingObject = tsxClasses.find(
           (obj) => obj.tsxFile === tsxFilePath
         );
         if (existingObject) {
           existingObject.classes.push(formattedClassName);
         } else {
-          result.push({ tsxFile: tsxFilePath, classes: [formattedClassName] });
+          tsxClasses.push({
+            tsxFile: tsxFilePath,
+            classes: [formattedClassName],
+          });
         }
       });
     }
   });
 
-  return result;
+  return tsxClasses;
 };
 
-const getDuplicateClasses = (scssFile: string) => {
-  const classes: string[] = [];
-
-  const fileContent = fs.readFileSync(scssFile, "utf-8");
-
-  const classNames = fileContent.match(/\.([a-zA-Z][\w-]*)/g);
-
-  if (classNames) {
-    classNames.forEach((className: string) => {
-      const formattedClassName = className.replace(".", "");
-      classes.push(formattedClassName);
-    });
-  }
+const getDuplicateClasses = async (scssFile: string) => {
+  const classes = await getClasses(scssFile);
 
   const uniqueClasses = new Set();
   const duplicateClasses = classes.filter((item) => {
@@ -137,77 +140,110 @@ const getDuplicateClasses = (scssFile: string) => {
   return Array.from(new Set(duplicateClasses));
 };
 
-console.log(`
-             SCSS-INSPECTOR             
-                                        
-              ▒▒▒▒                      
-         ▒▒▓▓██████▓▒                   
-       ▒▓██████▓▓████▓▒▒▒▒▒▒▒▒          
-      ▒▒▒▓████▓▓▓▓████▒▒▒▒▒▒▒▒▒▒▒▒      
-     ▒▒▒▒▒▒▒▒▒███▓▒▒▒▒▒▒▒▒▓▓▓▓▓▓▒▒▒▒    
-    ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▓███████████▒▒▒▒▒  
-    ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▓███████▓▓▓▒▒▒▒▒▒▒ 
-    ▒▒▒▒▒▒▒▒▒▓███▓▓▓▓▒▒▒▒▒▓▓▓▒▒▒▒▒▒▒▒▒▒▒
-     ▒▒▒▒▒▒▒▒▓█████████▓▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒
-       ▒▒▒▒▓▓▓▒▒▒▒▓▓▓█████████▓▓▓▒▒▒▒▒▒▒
-        ▒▒▒▓▓▓▓▒▒▒▒▒▒▒▒▒▓▓▓████████▓▓▓▒▒
-          ▒▓▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▓▓▓▓▓██████▒
-          ▒▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▒▒▒▒▒▓▓▓▒▒
-          ▒▓▓▓▓▓▓▓▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒ 
-            ▒▒▓▓▒▓▓▓▓▒▒▒▒▒▒▒▒▒▒▒        
-                                        
-             INSPECTING SCSS            
-`);
+const TITLE_MESSAGE = `
+                  SCSS-INSPECTOR                  
+                                                  
+                ▒▒▓▓██▓▒                          
+           ▒▒▓▓█████████▓▒▒▒▒▒                    
+         ▒▒███████████████▓▒▒▒▒▒▒▒▒▒▒             
+        ▒▒▒███████▓▓▒▓█████▓▒▒▒▒▒▒▒▒▒▒▒▒▒         
+       ▒▒▒▒▒▒▓▓▓▓█████▒▓██▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒      
+      ▒▒▒▒▒▒▒▒▒▒▒▓███▓▒▒▒▒▒▒▒▓▓▓▓▓▓▓▓███▓▒▒▒▒▒    
+     ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▓██████████████▓▒▒▒▒▒   
+     ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▓██████████▓▓▓▒▒▒▒▒▒▒▒▒ 
+     ▒▒▒▒▒▒▒▒▒▒▒▒▓▓▓▓▓▓▒▒▒▒▒▒▒▒▒▓████▒▒▒▒▒▒▒▒▒▒▒▒▒
+     ▒▒▒▒▒▒▒▒▒▒▒██████████▓▓▓▒▒▒▒▒▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+       ▒▒▒▒▒▒▒▒▒▒▓▓▓████████████▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
+        ▒▒▒▒▒▓▓▓▓▒▒▒▒▒▒▓▓▓████████████▓▓▓▒▒▒▒▒▒▒▒▒
+          ▒▒▒▓▓▓▓▓▓▒▒▒▒▒▒▒▒▒▒▓▓▓████████████▓▓▓▒▒▒
+           ▒▒▒▓▓▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▓▓▓▓██████████▓▒
+             ▒▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▒▒▒▒▓▓▓████▓▒
+            ▒▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒
+             ▒▓▓▓▓▓▓▓▓▓▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  
+               ▒▒▓▓▓▓▓▓▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒         
+                      ▒▒▒▒▒▒▒▒▒▒▒▒▒▒              
+                                                  
+                  INSPECTING SCSS                 
+`;
 
-const allTsxFiles = getAllTsxFiles(path.join(projectDirectory, "src"));
-const tsxFilesWithScssImport = processTsxFiles(allTsxFiles);
+const main = async () => {
+  console.log(TITLE_MESSAGE);
 
-tsxFilesWithScssImport.forEach(({ scssFile, tsxFiles }: FileObject) => {
-  const declaredClasses = getDeclaredClasses(scssFile);
-  const duplicateClasses = getDuplicateClasses(scssFile);
-  const tsxClasses = getClassesPerTsxFile(tsxFiles);
+  const DUPLICATES: { scssFile: string; duplicates: string[] }[] = [];
+  const NONEXISTING: { tsxFile: string; nonexisting: string[] }[] = [];
+  const UNUSED: { scssFile: string; unused: string[] }[] = [];
 
-  const mergedClasses = tsxClasses.reduce((acc: string[], curr) => {
-    const combinedClasses = acc.concat(curr.classes);
-    return Array.from(new Set(combinedClasses));
-  }, []);
+  const allTsxFiles = getAllTsxFiles(path.join(projectDirectory, "src"));
+  const tsxFilesWithScssImport = processTsxFiles(allTsxFiles);
 
-  const unusedClasses = declaredClasses.filter(
-    (className) => !mergedClasses.includes(className)
+  await Promise.all(
+    tsxFilesWithScssImport.map(async ({ scssFile, tsxFiles }) => {
+      const declaredClasses = await getClasses(scssFile);
+      const duplicateClasses = await getDuplicateClasses(scssFile);
+      const tsxClasses = getClassesPerTsxFile(tsxFiles);
+
+      if (duplicateClasses.length) {
+        DUPLICATES.push({
+          scssFile,
+          duplicates: duplicateClasses,
+        });
+      }
+
+      tsxClasses.forEach((usedClass) => {
+        const nonExistingClasses = usedClass.classes.filter(
+          (className: string) => !declaredClasses.includes(className)
+        );
+        if (nonExistingClasses.length) {
+          NONEXISTING.push({
+            tsxFile: usedClass.tsxFile,
+            nonexisting: nonExistingClasses,
+          });
+        }
+      });
+
+      const mergedClasses = tsxClasses.reduce((acc: string[], curr) => {
+        const combinedClasses = acc.concat(curr.classes);
+        return Array.from(new Set(combinedClasses));
+      }, []);
+
+      const unusedClasses = declaredClasses.filter(
+        (className) => !mergedClasses.includes(className)
+      );
+
+      if (unusedClasses.length) {
+        UNUSED.push({
+          scssFile,
+          unused: Array.from(new Set(unusedClasses)),
+        });
+      }
+    })
   );
 
-  if (unusedClasses.length) {
-    warn(
-      "Unused classes",
-      "these classes exist in your .scss file but are not used in any .tsx files"
-    );
-    console.log(scssFile);
-    console.log(Array.from(new Set(unusedClasses)));
-    console.log("\n");
-  }
-
-  if (duplicateClasses.length) {
+  if (DUPLICATES.length) {
     warn(
       "Duplicate classes",
       "these classes are declared more than once in your .scss file"
     );
-    console.log(scssFile);
-    console.log(duplicateClasses);
+    console.log(DUPLICATES);
     console.log("\n");
   }
 
-  tsxClasses.forEach((usedClass) => {
-    const nonExistingClasses = usedClass.classes.filter(
-      (className: string) => !declaredClasses.includes(className)
+  if (NONEXISTING.length) {
+    warn(
+      "Non-existing classes",
+      "these classes are used in your .tsx file but do not exist in your .scss file"
     );
-    if (nonExistingClasses.length) {
-      warn(
-        "Non-existing classes",
-        "these classes are used in your .tsx file but do not exist in your .scss file"
-      );
-      console.log(usedClass.tsxFile);
-      console.log(nonExistingClasses);
-      console.log("\n");
-    }
-  });
-});
+    console.log(NONEXISTING);
+    console.log("\n");
+  }
+
+  if (UNUSED.length) {
+    warn(
+      "Unused classes",
+      "these classes exist in your .scss file but are not used in any .tsx files"
+    );
+    console.log(UNUSED);
+    console.log("\n");
+  }
+};
+main();
