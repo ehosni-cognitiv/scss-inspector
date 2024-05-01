@@ -1,0 +1,25 @@
+{
+  "name": "scss-inspector",
+  "version": "1.0.27",
+  "description": "Inspects scss modules and tsx files for unused, non-existent, and duplicate scss classes",
+  "main": "src/index.js",
+  "bin": {
+    "scss-inspector": "src/index.js"
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": [
+    "scss",
+    "inspector",
+    "css",
+    "module",
+    "typescript"
+  ],
+  "author": "Evan Hosni",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "typescript": "^5.4.5"
+  }
+}
