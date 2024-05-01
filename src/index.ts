@@ -1,170 +1,14 @@
 #!/usr/bin/env node
-import fs from "fs";
 import path from "path";
-import postcss from "postcss";
-import postcssScss from "postcss-scss";
-
-const [projectDirectory] = __dirname.split("/node_modules/");
-
-const YELLOW_COLOR_CODE = "\x1b[33m";
-const GRAY_COLOR_CODE = "\x1b[90m";
-const RESET_COLOR_CODE = "\x1b[0m";
-
-interface FileObject {
-  scssFile: string;
-  tsxFiles: string[];
-}
-
-interface TsxClass {
-  tsxFile: string;
-  classes: string[];
-}
-
-const warn = (title: string, description: string) => {
-  console.warn(
-    `${YELLOW_COLOR_CODE}WARNING:${RESET_COLOR_CODE} ${title} ${GRAY_COLOR_CODE}- ${description}${RESET_COLOR_CODE}`
-  );
-};
-
-const getAllTsxFiles = (directory: string): string[] => {
-  let result: string[] = [];
-
-  const items = fs.readdirSync(directory);
-
-  items.forEach((item: string) => {
-    const itemPath = path.join(directory, item);
-
-    if (fs.statSync(itemPath).isDirectory()) {
-      result = result.concat(getAllTsxFiles(itemPath));
-    } else if (item.endsWith(".tsx")) {
-      result.push(itemPath);
-    }
-  });
-
-  return result;
-};
-
-const processTsxFiles = (tsxFiles: string[]) => {
-  const result: FileObject[] = [];
-
-  tsxFiles.forEach((tsxFile: string) => {
-    const fileContent = fs.readFileSync(tsxFile, "utf-8");
-    const scssImportMatch = fileContent.match(
-      /import\s+cn\s+from\s+['"](.+\.module\.scss)['"]/
-    );
-    if (scssImportMatch) {
-      const scssFileName = scssImportMatch[1];
-      const scssFilePath = path.join(
-        `${path.join(projectDirectory, "src")}`,
-        scssFileName
-      );
-      const existingObject = result.find(
-        (obj) => obj.scssFile === scssFilePath
-      );
-      if (existingObject) {
-        existingObject.tsxFiles.push(tsxFile);
-      } else {
-        result.push({ scssFile: scssFilePath, tsxFiles: [tsxFile] });
-      }
-    }
-  });
-
-  return result;
-};
-
-const getClasses = async (scssFile: string) => {
-  const classes: string[] = [];
-
-  const fileContent = fs.readFileSync(scssFile, "utf-8");
-
-  const res = await postcss().process(fileContent, {
-    from: scssFile,
-    parser: postcssScss,
-  });
-
-  res.root.walkRules((rule) => {
-    rule.selectors.forEach((selector) => {
-      const selectors = selector.split(/[\s>+~:,]+/).map((s) => s.trim());
-      selectors.forEach((s: string) => {
-        if (s.startsWith(".") && /^[.#\[\w-]+$/.test(s)) {
-          const sliced = s.slice(1);
-          const classNames = sliced.split(".");
-          classes.push(...classNames);
-        }
-      });
-    });
-  });
-
-  return classes;
-};
-
-const getClassesPerTsxFile = (tsxFiles: string[]) => {
-  const tsxClasses: TsxClass[] = [];
-
-  tsxFiles.forEach((tsxFilePath: string) => {
-    const tsxContent = fs.readFileSync(tsxFilePath, "utf-8");
-
-    const classNames = tsxContent.match(/(?<![a-zA-Z0-9_-])cn\.[\w-]+/g);
-
-    if (classNames) {
-      classNames.forEach((className: string) => {
-        const formattedClassName = className.replace("cn.", "");
-        const existingObject = tsxClasses.find(
-          (obj) => obj.tsxFile === tsxFilePath
-        );
-        if (existingObject) {
-          existingObject.classes.push(formattedClassName);
-        } else {
-          tsxClasses.push({
-            tsxFile: tsxFilePath,
-            classes: [formattedClassName],
-          });
-        }
-      });
-    }
-  });
-
-  return tsxClasses;
-};
-
-const getDuplicateClasses = async (scssFile: string) => {
-  const classes = await getClasses(scssFile);
-
-  const uniqueClasses = new Set();
-  const duplicateClasses = classes.filter((item) => {
-    if (uniqueClasses.has(item)) return true;
-    uniqueClasses.add(item);
-    return false;
-  });
-
-  return Array.from(new Set(duplicateClasses));
-};
-
-const TITLE_MESSAGE = `
-                  SCSS-INSPECTOR                  
-                                                  
-                ▒▒▓▓██▓▒                          
-           ▒▒▓▓█████████▓▒▒▒▒▒                    
-         ▒▒███████████████▓▒▒▒▒▒▒▒▒▒▒             
-        ▒▒▒███████▓▓▒▓█████▓▒▒▒▒▒▒▒▒▒▒▒▒▒         
-       ▒▒▒▒▒▒▓▓▓▓█████▒▓██▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒      
-      ▒▒▒▒▒▒▒▒▒▒▒▓███▓▒▒▒▒▒▒▒▓▓▓▓▓▓▓▓███▓▒▒▒▒▒    
-     ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▓██████████████▓▒▒▒▒▒   
-     ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▓██████████▓▓▓▒▒▒▒▒▒▒▒▒ 
-     ▒▒▒▒▒▒▒▒▒▒▒▒▓▓▓▓▓▓▒▒▒▒▒▒▒▒▒▓████▒▒▒▒▒▒▒▒▒▒▒▒▒
-     ▒▒▒▒▒▒▒▒▒▒▒██████████▓▓▓▒▒▒▒▒▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
-       ▒▒▒▒▒▒▒▒▒▒▓▓▓████████████▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
-        ▒▒▒▒▒▓▓▓▓▒▒▒▒▒▒▓▓▓████████████▓▓▓▒▒▒▒▒▒▒▒▒
-          ▒▒▒▓▓▓▓▓▓▒▒▒▒▒▒▒▒▒▒▓▓▓████████████▓▓▓▒▒▒
-           ▒▒▒▓▓▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▓▓▓▓██████████▓▒
-             ▒▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▒▒▒▒▓▓▓████▓▒
-            ▒▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒
-             ▒▓▓▓▓▓▓▓▓▓▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  
-               ▒▒▓▓▓▓▓▓▓▓▓▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒         
-                      ▒▒▒▒▒▒▒▒▒▒▒▒▒▒              
-                                                  
-                  INSPECTING SCSS                 
-`;
+import { TITLE_MESSAGE, projectDirectory } from "./constants";
+import {
+  getAllTsxFiles,
+  getDuplicateClasses,
+  getScssClasses,
+  getTsxClasses,
+  sendWarning,
+  processTsxFiles,
+} from "./utils";
 
 const main = async () => {
   console.log(TITLE_MESSAGE);
@@ -178,14 +22,14 @@ const main = async () => {
 
   await Promise.all(
     tsxFilesWithScssImport.map(async ({ scssFile, tsxFiles }) => {
-      const declaredClasses = await getClasses(scssFile);
+      const declaredClasses = await getScssClasses(scssFile);
       const duplicateClasses = await getDuplicateClasses(scssFile);
-      const tsxClasses = getClassesPerTsxFile(tsxFiles);
+      const tsxClasses = getTsxClasses(tsxFiles);
 
       if (duplicateClasses.length) {
         DUPLICATES.push({
           scssFile,
-          duplicates: duplicateClasses,
+          duplicates: Array.from(new Set(duplicateClasses)),
         });
       }
 
@@ -196,7 +40,7 @@ const main = async () => {
         if (nonExistingClasses.length) {
           NONEXISTING.push({
             tsxFile: usedClass.tsxFile,
-            nonexisting: nonExistingClasses,
+            nonexisting: Array.from(new Set(nonExistingClasses)),
           });
         }
       });
@@ -220,30 +64,31 @@ const main = async () => {
   );
 
   if (DUPLICATES.length) {
-    warn(
-      "Duplicate classes",
-      "these classes are declared more than once in your .scss file"
-    );
-    console.log(DUPLICATES);
-    console.log("\n");
+    sendWarning({
+      title: "Duplicate classes",
+      description:
+        "these classes are declared more than once in your .scss file",
+      array: DUPLICATES,
+    });
   }
 
   if (NONEXISTING.length) {
-    warn(
-      "Non-existing classes",
-      "these classes are used in your .tsx file but do not exist in your .scss file"
-    );
-    console.log(NONEXISTING);
-    console.log("\n");
+    sendWarning({
+      title: "Non-existing classes",
+      description:
+        "these classes are used in your .tsx file but do not exist in your .scss file",
+      array: NONEXISTING,
+    });
   }
 
   if (UNUSED.length) {
-    warn(
-      "Unused classes",
-      "these classes exist in your .scss file but are not used in any .tsx files"
-    );
-    console.log(UNUSED);
-    console.log("\n");
+    sendWarning({
+      title: "Unused classes",
+      description:
+        "these classes exist in your .scss file but are not used in any .tsx files",
+      array: UNUSED,
+    });
   }
 };
+
 main();
